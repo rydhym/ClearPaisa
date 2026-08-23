@@ -1,0 +1,246 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum PaymentMode {
+  UPI
+  CARD
+  NET_BANKING
+  CASH
+  WALLET
+}
+
+enum TransactionType {
+  DEBIT
+  CREDIT
+}
+
+enum SourceType {
+  GMAIL
+  SETU
+  CSV
+  PDF
+  MANUAL
+}
+
+enum AccountType {
+  SAVINGS
+  CURRENT
+  CREDIT_CARD
+  LOAN
+}
+
+enum ConsentStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  PENDING
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String?
+  name          String?
+  role          Role      @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts       BankAccount[]
+  transactions   Transaction[]
+  budgets        Budget[]
+  subscriptions  Subscription[]
+  notifications  Notification[]
+  consents       Consent[]
+  emailMessages  EmailMessage[]
+  syncLogs       SyncLogs[]
+  aiInsights     AIInsight[]
+  summaries      MonthlySummary[]
+  auditLogs      AuditLog[]
+}
+
+model BankAccount {
+  id            String      @id @default(uuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId     String      // Account number or custom ID from provider
+  bankName      String
+  accountType   AccountType
+  balance       Float
+  currency      String      @default("INR")
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  transactions  Transaction[]
+
+  @@unique([userId, accountId])
+}
+
+model Category {
+  id          String        @id @default(uuid())
+  name        String        @unique // Food, Shopping, Bills, Travel, etc.
+  description String?
+  createdAt   DateTime      @default(now())
+  transactions Transaction[]
+  budgets      Budget[]
+}
+
+model Merchant {
+  id             String        @id @default(uuid())
+  name           String        @unique // e.g. Amazon, Swiggy, Uber
+  normalizedName String        // Normalized version (canonical mapping)
+  createdAt      DateTime      @default(now())
+  transactions   Transaction[]
+}
+
+model Transaction {
+  id              String          @id @default(uuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId       String?
+  account         BankAccount?    @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  amount          Float
+  type            TransactionType
+  merchantId      String?
+  merchant        Merchant?       @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  categoryId      String?
+  category        Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  timestamp       DateTime
+  paymentMode     PaymentMode
+  referenceNumber String?
+  description     String?
+  confidenceScore Float           @default(1.0)
+  source          SourceType
+  rawMetadata     Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([userId, timestamp])
+  @@index([userId, categoryId])
+}
+
+model Consent {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       String        // e.g. "SETU"
+  consentId      String        @unique
+  status         ConsentStatus @default(PENDING)
+  validFrom      DateTime
+  validTo        DateTime
+  frequency      String        // e.g., "DAILY", "ONCE"
+  rawConsentData Json?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model EmailMessage {
+  id             String      @id @default(uuid())
+  userId         String
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId      String      @unique // Gmail message ID
+  threadId       String
+  from           String
+  date           DateTime
+  snippet        String?
+  bodyRaw        String?
+  parsedSuccess  Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+}
+
+model Budget {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId  String
+  category    Category  @relation(fields: [categoryId], references: [id])
+  amount      Float
+  spent       Float     @default(0.0)
+  startDate   DateTime
+  endDate     DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, categoryId, startDate])
+}
+
+model Subscription {
+  id              String    @id @default(uuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String    // Spotify, Netflix, Electricity, etc.
+  amount          Float
+  currency        String    @default("INR")
+  billingCycle    String    // MONTHLY, YEARLY
+  nextBillingDate DateTime
+  status          String    @default("ACTIVE") // ACTIVE, CANCELLED
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  type      String   // BILL_REMINDER, BUDGET_ALERT, HEALTH_SCORE
+  createdAt DateTime @default(now())
+}
+
+model SyncLogs {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider  String   // Gmail, Setu, CSV, PDF
+  status    String   // SUCCESS, FAILED
+  records   Int      @default(0)
+  error     String?
+  createdAt DateTime @default(now())
+}
+
+model AIInsight {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // MONTHLY_REPORT, DUPLICATE_ALERT, CATEGORY_ALERT
+  content   String   @db.Text
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model MonthlySummary {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  month        Int      // 1-12
+  year         Int      // e.g., 2026
+  totalSpent   Float
+  totalIncome  Float
+  savings      Float
+  netCashflow  Float
+  healthScore  Int      // 1-100
+  createdAt    DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String   // e.g. "REVOKED_CONSENT", "DELETE_ACCOUNT"
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+}

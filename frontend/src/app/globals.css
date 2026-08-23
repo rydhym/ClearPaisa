@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #f5f5f7;
+  --foreground: #1d1d1f;
+  --border: #e8e8ed;
+  --card-bg: #ffffff;
+  --card-border: rgba(0, 0, 0, 0.05);
+}
+
+.dark {
+  --background: #000000;
+  --foreground: #f5f5f7;
+  --border: #1d1d1f;
+  --card-bg: #1d1d1f;
+  --card-border: rgba(255, 255, 255, 0.1);
+}
+
+body {
+  color: var(--foreground);
+  background-color: var(--background);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom modern rounded card utility */
+.apple-card {
+  background-color: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 20px;
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.01);
+  backdrop-filter: blur(5px);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.apple-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.03);
+}

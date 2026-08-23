@@ -330,7 +330,7 @@ export class AccountAggregatorService implements IDataProvider {
                   const type = tx.type === 'DEBIT' ? 'DEBIT' : 'CREDIT';
                   const amount = parseFloat(tx.amount || '0');
                   
-                  let paymentMode = PaymentMode.NET_BANKING;
+                  let paymentMode: PaymentMode = PaymentMode.NET_BANKING;
                   if (tx.mode === 'UPI') paymentMode = PaymentMode.UPI;
                   else if (tx.mode === 'CARD') paymentMode = PaymentMode.CARD;
 

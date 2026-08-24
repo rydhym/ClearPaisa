@@ -9,6 +9,8 @@ class SetuAAClient {
   private clientId: string;
   private clientSecret: string;
   private productInstanceId: string;
+  private cachedToken: string | null = null;
+  private tokenExpiry: number = 0;
 
   constructor() {
     this.baseUrl = process.env.SETU_BASE_URL || 'https://fiu-sandbox.setu.co';
@@ -26,39 +28,62 @@ class SetuAAClient {
     );
   }
 
-  private getHeaders() {
+  async getAccessToken(): Promise<string> {
+    const now = Date.now();
+    if (this.cachedToken && now < this.tokenExpiry - 30 * 1000) {
+      return this.cachedToken;
+    }
+
+    console.log('Fetching new Setu OAuth access token...');
+    const body = {
+      clientID: this.clientId,
+      secret: this.clientSecret,
+      grant_type: 'client_credentials'
+    };
+
+    const res = await axios.post('https://accountservice.setu.co/v1/users/login', body, {
+      headers: {
+        'client': 'bridge',
+        'Content-Type': 'application/json'
+      }
+    });
+
+    this.cachedToken = res.data.access_token;
+    this.tokenExpiry = now + (res.data.expires_in || 300) * 1000;
+    return this.cachedToken!;
+  }
+
+  private async getHeaders() {
+    const token = await this.getAccessToken();
     return {
       'Content-Type': 'application/json',
-      'x-client-id': this.clientId,
-      'x-client-secret': this.clientSecret,
+      'Authorization': `Bearer ${token}`,
       'x-product-instance-id': this.productInstanceId
     };
   }
 
   async createConsent(vua: string, redirectUrl: string) {
     const body = {
-      vua,
+      vua: vua.includes('@') ? vua : `${vua}@onemoney`, // Default to onemoney handle for sandbox
       consentDuration: {
         unit: 'MONTH',
         value: 12
       },
-      consentMode: 'VIEW',
-      fetchType: 'ONETIME',
-      consentTypes: ['TRANSACTIONS', 'SUMMARY', 'PROFILE'],
-      fiTypes: ['DEPOSIT'],
       dataRange: {
         from: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(), // Past 1 year
         to: new Date().toISOString()
       },
-      redirectUrl
+      context: []
     };
 
-    const res = await axios.post(`${this.baseUrl}/consents`, body, { headers: this.getHeaders() });
+    const headers = await this.getHeaders();
+    const res = await axios.post(`${this.baseUrl}/v2/consents`, body, { headers });
     return res.data; // { id: "consent-uuid", url: "webview-redirect-url" }
   }
 
   async getConsentStatus(consentId: string) {
-    const res = await axios.get(`${this.baseUrl}/consents/${consentId}`, { headers: this.getHeaders() });
+    const headers = await this.getHeaders();
+    const res = await axios.get(`${this.baseUrl}/v2/consents/${consentId}`, { headers });
     return res.data; // { status: "APPROVED" | "PENDING" | "ACTIVE" }
   }
 
@@ -71,12 +96,14 @@ class SetuAAClient {
       },
       format: 'json'
     };
-    const res = await axios.post(`${this.baseUrl}/sessions`, body, { headers: this.getHeaders() });
+    const headers = await this.getHeaders();
+    const res = await axios.post(`${this.baseUrl}/sessions`, body, { headers });
     return res.data; // { id: "session-uuid", status: "PENDING" }
   }
 
   async getSessionData(sessionId: string) {
-    const res = await axios.get(`${this.baseUrl}/sessions/${sessionId}`, { headers: this.getHeaders() });
+    const headers = await this.getHeaders();
+    const res = await axios.get(`${this.baseUrl}/sessions/${sessionId}`, { headers });
     return res.data; // { status: "COMPLETED", Payload: [...] }
   }
 }

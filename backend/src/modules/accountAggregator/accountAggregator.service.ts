@@ -89,8 +89,10 @@ export class AccountAggregatorService implements IDataProvider {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     const userVua = user?.email.replace(/@.*/, '') + '@setu'; // Sandbox VUA structure
 
-    // Default redirect to settings panel
-    const redirectUrl = `http://localhost:3000/settings`;
+    // Dynamic redirect to settings panel based on deployment host
+    const redirectUrl = process.env.FRONTEND_URL 
+      ? `${process.env.FRONTEND_URL}/settings` 
+      : 'http://localhost:3000/settings';
 
     if (this.setuClient.isConfigured()) {
       try {

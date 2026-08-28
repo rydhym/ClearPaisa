@@ -44,7 +44,8 @@ class SetuAAClient {
     const res = await axios.post('https://accountservice.setu.co/v1/users/login', body, {
       headers: {
         'client': 'bridge',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
       }
     });
 

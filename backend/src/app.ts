@@ -30,7 +30,11 @@ app.use(express.urlencoded({ extended: true }));
 
 // Health Check
 app.get('/health', (req: Request, res: Response) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date() });
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date(),
+    revision: process.env.RENDER_GIT_COMMIT || process.env.RAILWAY_GIT_COMMIT_SHA || 'local'
+  });
 });
 
 // Mounting Module Routers

@@ -13,28 +13,24 @@ export class AccountAggregatorController {
       const userId = req.user?.id;
       if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-      const { bankId } = req.body;
-      if (!bankId) return res.status(400).json({ error: 'Bank ID is required' });
+      const { mobileNumber } = req.body;
+      if (!mobileNumber) return res.status(400).json({ error: 'Mobile number is required' });
 
-      const result = await aaService.initiateConsent(userId, bankId);
+      const result = await aaService.initiateConsent(userId, mobileNumber);
       return res.status(200).json(result);
     } catch (e: any) {
       return res.status(500).json({ error: e.message || 'Failed to initiate consent' });
     }
   }
 
-  async approveSandbox(req: AuthRequest, res: Response) {
+  async status(req: AuthRequest, res: Response) {
     try {
-      const { consentId } = req.body;
-      if (!consentId) return res.status(400).json({ error: 'Consent ID is required' });
-
-      const updatedConsent = await aaService.approveConsentSandbox(consentId);
-      return res.status(200).json({
-        message: 'Consent approved in Sandbox successfully. Mock bank accounts loaded.',
-        consent: updatedConsent
-      });
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+      const consent = await aaService.refreshConsentStatus(userId, req.params.consentId);
+      return res.status(200).json(consent);
     } catch (e: any) {
-      return res.status(500).json({ error: e.message || 'Failed to approve consent' });
+      return res.status(500).json({ error: e.message || 'Failed to refresh consent status' });
     }
   }
 

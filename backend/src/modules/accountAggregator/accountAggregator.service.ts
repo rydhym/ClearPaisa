@@ -1,6 +1,6 @@
 import { IDataProvider, IAccount, ITransaction } from '../../shared/interfaces/IDataProvider';
 import prisma from '../../shared/utils/db';
-import { AccountType, PaymentMode, SourceType } from '@prisma/client';
+import { AccountType, ConsentStatus, PaymentMode, SourceType } from '@prisma/client';
 import axios from 'axios';
 
 // Helper Client for Setu Account Aggregator Gateway APIs
@@ -66,16 +66,31 @@ class SetuAAClient {
 
   async createConsent(vua: string, redirectUrl: string) {
     const body = {
-      vua: vua.includes('@') ? vua : `${vua}@onemoney`, // Default to onemoney handle for sandbox
+      vua,
       consentDuration: {
         unit: 'MONTH',
         value: 12
+      },
+      consentMode: 'STORE',
+      fetchType: 'PERIODIC',
+      consentTypes: ['PROFILE', 'SUMMARY', 'TRANSACTIONS'],
+      fiTypes: ['DEPOSIT'],
+      purpose: {
+        code: '102',
+        text: 'Customer spending patterns and budgeting',
+        refUri: 'https://api.rebit.org.in/aa/purpose/102.xml',
+        category: { type: 'string' }
       },
       dataRange: {
         from: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(), // Past 1 year
         to: new Date().toISOString()
       },
-      context: []
+      dataLife: { unit: 'MONTH', value: 12 },
+      frequency: { unit: 'DAY', value: 1 },
+      redirectUrl,
+      context: [
+        { key: 'accountSelectionMode', value: 'multi' }
+      ]
     };
 
     const headers = await this.getHeaders();
@@ -114,9 +129,11 @@ export class AccountAggregatorService implements IDataProvider {
   private setuClient = new SetuAAClient();
 
   // Initiates a consent flow (Setu AA Sandbox or Live Flow)
-  async initiateConsent(userId: string, bankId: string) {
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    const userVua = user?.email.replace(/@.*/, '') + '@setu'; // Sandbox VUA structure
+  async initiateConsent(userId: string, mobileNumber: string) {
+    const userVua = mobileNumber.replace(/\D/g, '').slice(-10);
+    if (!/^\d{10}$/.test(userVua)) {
+      throw new Error('A valid 10-digit Indian mobile number is required');
+    }
 
     // Dynamic redirect to settings panel based on deployment host
     const redirectUrl = process.env.FRONTEND_URL 
@@ -137,7 +154,7 @@ export class AccountAggregatorService implements IDataProvider {
             validFrom: new Date(),
             validTo: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
             frequency: 'DAILY',
-            rawConsentData: { bankId, txnid: setuConsent.txnid }
+            rawConsentData: { mobileNumber: userVua, txnid: setuConsent.txnid, setuUrl: setuConsent.url }
           }
         });
 
@@ -147,93 +164,29 @@ export class AccountAggregatorService implements IDataProvider {
         };
       } catch (err: any) {
         console.error('Failed to initiate live Setu consent request:', err.response?.data || err.message);
-        // Fallback to Sandbox mock simulator below
+        const upstreamMessage = err.response?.data?.errorMsg || err.response?.data?.message || err.message;
+        throw new Error(`Setu consent creation failed: ${upstreamMessage}`);
       }
     }
-
-    // Fallback Mock Consent Setup
-    const consentId = `consent_setu_${Math.random().toString(36).substring(2, 10)}`;
-    const mockRedirectUrl = `https://sandbox.setu.co/consent/${consentId}?redirect=${encodeURIComponent(redirectUrl)}`;
-
-    const consent = await prisma.consent.create({
-      data: {
-        userId,
-        provider: 'SETU',
-        consentId,
-        status: 'PENDING',
-        validFrom: new Date(),
-        validTo: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
-        frequency: 'DAILY',
-        rawConsentData: { bankId }
-      }
-    });
-
-    return {
-      consentId: consent.consentId,
-      redirectUrl: mockRedirectUrl
-    };
+    throw new Error('Setu sandbox credentials are not configured');
   }
 
-  // Setu Sandbox Helper: approves consent in sandbox mode (seeds accounts)
-  async approveConsentSandbox(consentId: string) {
-    const consent = await prisma.consent.findUnique({
-      where: { consentId }
-    });
+  async refreshConsentStatus(userId: string, consentId: string) {
+    const consent = await prisma.consent.findFirst({ where: { userId, consentId, provider: 'SETU' } });
+    if (!consent) throw new Error('Consent not found');
+    if (!this.setuClient.isConfigured()) throw new Error('Setu sandbox credentials are not configured');
 
-    if (!consent) {
-      throw new Error('Consent not found');
-    }
+    const setuConsent = await this.setuClient.getConsentStatus(consentId);
+    const status: ConsentStatus = setuConsent.status === 'ACTIVE' || setuConsent.status === 'APPROVED'
+      ? ConsentStatus.ACTIVE
+      : setuConsent.status === 'REJECTED' || setuConsent.status === 'REVOKED'
+        ? ConsentStatus.REVOKED
+        : ConsentStatus.PENDING;
 
-    const updatedConsent = await prisma.consent.update({
+    return prisma.consent.update({
       where: { consentId },
-      data: {
-        status: 'ACTIVE'
-      }
+      data: { status, rawConsentData: setuConsent }
     });
-
-    // Seed mock Bank Accounts for this user
-    const mockAccounts = [
-      {
-        accountId: `acc_hdfc_${consent.userId.slice(0, 4)}`,
-        accountNumber: 'XXXXXX5012',
-        bankName: 'HDFC Bank',
-        accountType: AccountType.SAVINGS,
-        balance: 45250.75,
-        currency: 'INR'
-      },
-      {
-        accountId: `acc_icici_${consent.userId.slice(0, 4)}`,
-        accountNumber: 'XXXXXX8841',
-        bankName: 'ICICI Bank',
-        accountType: AccountType.CREDIT_CARD,
-        balance: -12450.00,
-        currency: 'INR'
-      }
-    ];
-
-    for (const acc of mockAccounts) {
-      await prisma.bankAccount.upsert({
-        where: {
-          userId_accountId: {
-            userId: consent.userId,
-            accountId: acc.accountId
-          }
-        },
-        update: {
-          balance: acc.balance
-        },
-        create: {
-          userId: consent.userId,
-          accountId: acc.accountId,
-          bankName: acc.bankName,
-          accountType: acc.accountType,
-          balance: acc.balance,
-          currency: acc.currency
-        }
-      });
-    }
-
-    return updatedConsent;
   }
 
   // IDataProvider Interface implementation
@@ -323,40 +276,44 @@ export class AccountAggregatorService implements IDataProvider {
         while (retries > 0) {
           await new Promise(resolve => setTimeout(resolve, 1500)); // sleep 1.5s
           sessionData = await this.setuClient.getSessionData(sessionId);
-          if (sessionData.status === 'COMPLETED') {
+          if (sessionData.status === 'COMPLETED' || sessionData.status === 'PARTIAL') {
             break;
           }
           retries--;
         }
 
-        if (sessionData && sessionData.status === 'COMPLETED' && sessionData.Payload) {
+        if (sessionData && (sessionData.status === 'COMPLETED' || sessionData.status === 'PARTIAL')) {
           const liveAccounts: IAccount[] = [];
           const liveTransactions: ITransaction[] = [];
 
-          // Map ReBIT decrypted payload
-          for (const payloadItem of sessionData.Payload) {
-            if (!payloadItem.data || !Array.isArray(payloadItem.data)) continue;
-            for (const fipAccount of payloadItem.data) {
-              const decrypted = fipAccount.decryptedFI;
+          // Map the current Setu FI response (fips[].accounts[].data.decryptedFI).
+          const payloadItems = sessionData.fips || sessionData.Payload || [];
+          for (const payloadItem of payloadItems) {
+            const accounts = payloadItem.accounts || payloadItem.data || [];
+            if (!Array.isArray(accounts)) continue;
+            for (const fipAccount of accounts) {
+              const decrypted = fipAccount.data?.decryptedFI || fipAccount.decryptedFI;
               if (!decrypted || !decrypted.account) continue;
 
               const acc = decrypted.account;
               const accId = acc.linkedAccRef || acc.maskedAccNumber;
-              const balance = parseFloat(decrypted.summary?.currentBalance || '0');
+              const balance = parseFloat(acc.summary?.currentBalance || '0');
 
               // Map Account details
               liveAccounts.push({
                 accountId: accId,
                 accountNumber: acc.maskedAccNumber,
-                bankName: decrypted.summary?.fipId || 'Bank Feed',
-                accountType: acc.type === 'SAVINGS' ? AccountType.SAVINGS : AccountType.CURRENT,
+                bankName: payloadItem.fipID || 'Bank Feed',
+                accountType: (acc.summary?.type || acc.type || '').toUpperCase() === 'SAVINGS'
+                  ? AccountType.SAVINGS
+                  : AccountType.CURRENT,
                 balance,
                 currency: 'INR'
               });
 
               // Map Transactions
-              if (decrypted.transactions && decrypted.transactions.transaction) {
-                const txList = decrypted.transactions.transaction;
+              if (acc.transactions && acc.transactions.transaction) {
+                const txList = acc.transactions.transaction;
                 for (const tx of txList) {
                   const type = tx.type === 'DEBIT' ? 'DEBIT' : 'CREDIT';
                   const amount = parseFloat(tx.amount || '0');
@@ -407,6 +364,14 @@ export class AccountAggregatorService implements IDataProvider {
             });
           }
 
+          // Replace provider account references with the internal BankAccount UUID
+          // required by Transaction.accountId's foreign key.
+          const savedAccounts = await prisma.bankAccount.findMany({ where: { userId } });
+          const internalIds = new Map(savedAccounts.map(acc => [acc.accountId, acc.id]));
+          liveTransactions.forEach(tx => {
+            if (tx.accountId) tx.accountId = internalIds.get(tx.accountId) || tx.accountId;
+          });
+
           return liveTransactions.filter(tx => {
             if (fromDate && tx.timestamp < fromDate) return false;
             if (toDate && tx.timestamp > toDate) return false;
@@ -414,7 +379,9 @@ export class AccountAggregatorService implements IDataProvider {
           });
         }
       } catch (err: any) {
-        console.error('Failed to pull transactions from live Setu Gateway. Falling back to sandbox simulator.', err.response?.data || err.message);
+        console.error('Failed to pull transactions from Setu Gateway.', err.response?.data || err.message);
+        const upstreamMessage = err.response?.data?.errorMsg || err.response?.data?.message || err.message;
+        throw new Error(`Setu data sync failed: ${upstreamMessage}`);
       }
     }
 
@@ -489,6 +456,12 @@ export class AccountAggregatorService implements IDataProvider {
         source: SourceType.SETU
       }
     ];
+
+    const savedAccounts = await prisma.bankAccount.findMany({ where: { userId } });
+    const internalIds = new Map(savedAccounts.map(acc => [acc.accountId, acc.id]));
+    mockTxs.forEach(tx => {
+      if (tx.accountId) tx.accountId = internalIds.get(tx.accountId) || tx.accountId;
+    });
 
     return mockTxs.filter(tx => {
       if (fromDate && tx.timestamp < fromDate) return false;

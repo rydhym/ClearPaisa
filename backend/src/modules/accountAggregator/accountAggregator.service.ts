@@ -13,7 +13,7 @@ class SetuAAClient {
   private tokenExpiry: number = 0;
 
   constructor() {
-    this.baseUrl = process.env.SETU_BASE_URL || 'https://fiu-sandbox.setu.co';
+    this.baseUrl = (process.env.SETU_BASE_URL || 'https://fiu-sandbox.setu.co').replace(/\/+$/, '');
     this.clientId = process.env.SETU_CLIENT_ID || '';
     this.clientSecret = process.env.SETU_CLIENT_SECRET || '';
     this.productInstanceId = process.env.SETU_PRODUCT_INSTANCE_ID || '';
@@ -164,7 +164,10 @@ export class AccountAggregatorService implements IDataProvider {
         };
       } catch (err: any) {
         console.error('Failed to initiate live Setu consent request:', err.response?.data || err.message);
-        const upstreamMessage = err.response?.data?.errorMsg || err.response?.data?.message || err.message;
+        const upstreamMessage = err.response?.data?.errorMsg
+          || err.response?.data?.message
+          || err.response?.data?.error
+          || err.message;
         throw new Error(`Setu consent creation failed: ${upstreamMessage}`);
       }
     }
@@ -380,7 +383,10 @@ export class AccountAggregatorService implements IDataProvider {
         }
       } catch (err: any) {
         console.error('Failed to pull transactions from Setu Gateway.', err.response?.data || err.message);
-        const upstreamMessage = err.response?.data?.errorMsg || err.response?.data?.message || err.message;
+        const upstreamMessage = err.response?.data?.errorMsg
+          || err.response?.data?.message
+          || err.response?.data?.error
+          || err.message;
         throw new Error(`Setu data sync failed: ${upstreamMessage}`);
       }
     }
